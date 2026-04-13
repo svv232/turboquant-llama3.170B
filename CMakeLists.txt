@@ -36,6 +36,8 @@ add_library(turboquant
   engine/polarquant.cpp
   engine/sdpa_int4.cpp
   engine/sdpa_polar.cpp
+  engine/sdpa_qjl.cpp
+  engine/qjl.cpp
   engine/llama_loader.cpp
   engine/llama_model.cpp
 )
@@ -63,6 +65,7 @@ set(METAL_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/engine/polarquant.metal
   ${CMAKE_CURRENT_SOURCE_DIR}/engine/sdpa_int4.metal
   ${CMAKE_CURRENT_SOURCE_DIR}/engine/sdpa_polar.metal
+  ${CMAKE_CURRENT_SOURCE_DIR}/engine/sdpa_qjl.metal
 )
 
 set(METALLIB_OUTPUT ${CMAKE_BINARY_DIR}/turboquant.metallib)
@@ -93,10 +96,18 @@ add_custom_command(
     -I ${CMAKE_CURRENT_SOURCE_DIR}
     -c ${CMAKE_CURRENT_SOURCE_DIR}/engine/sdpa_polar.metal
     -o ${CMAKE_BINARY_DIR}/sdpa_polar.air
+  COMMAND xcrun -sdk macosx metal
+    -std=metal3.0
+    -O2
+    -I ${MLX_METAL_INCLUDE}
+    -I ${CMAKE_CURRENT_SOURCE_DIR}
+    -c ${CMAKE_CURRENT_SOURCE_DIR}/engine/sdpa_qjl.metal
+    -o ${CMAKE_BINARY_DIR}/sdpa_qjl.air
   COMMAND xcrun -sdk macosx metallib
     ${CMAKE_BINARY_DIR}/polarquant.air
     ${CMAKE_BINARY_DIR}/sdpa_int4.air
     ${CMAKE_BINARY_DIR}/sdpa_polar.air
+    ${CMAKE_BINARY_DIR}/sdpa_qjl.air
     -o ${METALLIB_OUTPUT}
   DEPENDS ${METAL_SOURCES}
   COMMENT "Building Metal library"
@@ -118,6 +129,14 @@ add_executable(sdpa_polar_bench tests/sdpa_polar_bench.cpp)
 target_link_libraries(sdpa_polar_bench PRIVATE turboquant)
 target_compile_definitions(sdpa_polar_bench PRIVATE _METAL_)
 
+add_executable(qjl_validate tests/qjl_validate.cpp)
+target_link_libraries(qjl_validate PRIVATE turboquant)
+target_compile_definitions(qjl_validate PRIVATE _METAL_)
+
+add_executable(qjl_real tests/qjl_real_activations.cpp)
+target_link_libraries(qjl_real PRIVATE turboquant)
+target_compile_definitions(qjl_real PRIVATE _METAL_)
+
 add_executable(decode_profile tests/decode_profile.cpp)
 target_link_libraries(decode_profile PRIVATE turboquant)
 target_compile_definitions(decode_profile PRIVATE _METAL_)
@@ -137,6 +156,10 @@ target_compile_definitions(kv_memory_test PRIVATE _METAL_)
 add_executable(qmatmul_bench tests/qmatmul_bench.cpp)
 target_link_libraries(qmatmul_bench PRIVATE turboquant)
 target_compile_definitions(qmatmul_bench PRIVATE _METAL_)
+
+add_executable(sdpa_qjl_bench tests/sdpa_qjl_bench.cpp)
+target_link_libraries(sdpa_qjl_bench PRIVATE turboquant)
+target_compile_definitions(sdpa_qjl_bench PRIVATE _METAL_)
 
 add_executable(llama_e2e tests/llama_e2e.cpp)
 target_link_libraries(llama_e2e PRIVATE turboquant)

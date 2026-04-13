@@ -4,6 +4,7 @@
 
 #include "mlx/fast.h"
 #include "mlx/ops.h"
+#include "mlx/random.h"
 #include "mlx/transforms.h"
 
 #include "engine/llama_model.h"
@@ -22,6 +23,14 @@ LlamaModel::LlamaModel(LlamaWeights weights)
   sdpa_params_.num_kv_heads = cfg.num_key_value_heads;
   sdpa_params_.group_size = kv_group_size_;
   sdpa_params_.attn_scale = 1.0f / std::sqrt(static_cast<float>(cfg.head_dim));
+}
+
+void LlamaModel::enable_qjl(int sketch_dim) {
+  use_qjl_ = true;
+  qjl_sketch_dim_ = sketch_dim;
+  qjl_proj_ = generate_projection_matrix(sketch_dim, weights_.config.head_dim, 42);
+  mx::eval(qjl_proj_);
+  std::cerr << "[model] QJL enabled: m=" << sketch_dim << std::endl;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -147,28 +156,92 @@ mx::array LlamaModel::layer_forward(
   mx::array attn_out(0.0f);
 
   if (D == 128) {
-    // Fused SDPA with int4 KV — the core TurboQuant kernel (head_dim=128 only)
-    auto [k_q, k_s, k_z] = quantize_kv(k, s);
-    auto [v_q, v_s, v_z] = quantize_kv(v, s);
+    // Hybrid attention: fast SDPA for prefill, fused sdpa_int4 for decode
+    bool is_prefill = (S > 1);
 
-    if (kv_entry) {
-      if (kv_entry->seq_len > 0) {
-        k_q = mx::concatenate({kv_entry->k_quant, k_q}, 2, s);
-        k_s = mx::concatenate({kv_entry->k_scales, k_s}, 2, s);
-        k_z = mx::concatenate({kv_entry->k_zeros, k_z}, 2, s);
-        v_q = mx::concatenate({kv_entry->v_quant, v_q}, 2, s);
-        v_s = mx::concatenate({kv_entry->v_scales, v_s}, 2, s);
-        v_z = mx::concatenate({kv_entry->v_zeros, v_z}, 2, s);
+    if (is_prefill) {
+      // PREFILL: use MLX's optimized SDPA with FP16 KV (faster for Sq>1)
+      attn_out = mx::fast::scaled_dot_product_attention(
+          q, k, v, sdpa_params_.attn_scale, /*mask_mode=*/"", /*mask_arrs=*/{},
+          /*sinks=*/std::nullopt, s);
+
+      // Store K/V in cache for future decode steps
+      if (kv_entry) {
+        auto [v_q, v_s, v_z] = quantize_kv(v, s);
+        kv_entry->v_quant = v_q;
+        kv_entry->v_scales = v_s;
+        kv_entry->v_zeros = v_z;
+
+        bool use_qjl_this_layer_pf = use_qjl_ && (layer_idx < 20);
+        if (use_qjl_this_layer_pf) {
+          // QJL mode: store K as 1-bit sketches (early layers only)
+          auto [sketches, norms] = qjl_encode(k, qjl_proj_, s);
+          kv_entry->k_sketches = sketches;
+          kv_entry->k_norms_qjl = norms;
+        } else {
+          // Int4 mode: store K as int4
+          auto [k_q, k_s, k_z] = quantize_kv(k, s);
+          kv_entry->k_quant = k_q;
+          kv_entry->k_scales = k_s;
+          kv_entry->k_zeros = k_z;
+        }
+        kv_entry->seq_len = v_q.shape(2);
       }
-      kv_entry->k_quant = k_q;
-      kv_entry->k_scales = k_s;
-      kv_entry->k_zeros = k_z;
-      kv_entry->v_quant = v_q;
-      kv_entry->v_scales = v_s;
-      kv_entry->v_zeros = v_z;
-      kv_entry->seq_len = k_q.shape(2);
+    } else {
+      // DECODE (Sq=1): use fused kernel with cached KV
+      auto [v_q, v_s, v_z] = quantize_kv(v, s);
+
+      // Use QJL only for early layers (0-19) where correlation > 0.93
+      bool use_qjl_this_layer = use_qjl_ && (layer_idx < 20);
+
+      if (use_qjl_this_layer) {
+        // QJL decode: encode new K as sketch, concat with cached sketches
+        auto [k_sk, k_nm] = qjl_encode(k, qjl_proj_, s);
+        // Also encode Q on the fly
+        auto [q_sk, q_nm] = qjl_encode(q, qjl_proj_, s);
+
+        if (kv_entry && kv_entry->seq_len > 0) {
+          k_sk = mx::concatenate({kv_entry->k_sketches, k_sk}, 2, s);
+          k_nm = mx::concatenate({kv_entry->k_norms_qjl, k_nm}, 2, s);
+          v_q = mx::concatenate({kv_entry->v_quant, v_q}, 2, s);
+          v_s = mx::concatenate({kv_entry->v_scales, v_s}, 2, s);
+          v_z = mx::concatenate({kv_entry->v_zeros, v_z}, 2, s);
+        }
+        if (kv_entry) {
+          kv_entry->k_sketches = k_sk;
+          kv_entry->k_norms_qjl = k_nm;
+          kv_entry->v_quant = v_q;
+          kv_entry->v_scales = v_s;
+          kv_entry->v_zeros = v_z;
+          kv_entry->seq_len = k_sk.shape(2);
+        }
+
+        SdpaQJLParams qjl_params{D, qjl_sketch_dim_, H, Hkv, kv_group_size_, sdpa_params_.attn_scale};
+        attn_out = sdpa_qjl(q_sk, q_nm, k_sk, k_nm, v_q, v_s, v_z, qjl_params, s);
+      } else {
+        // Int4 decode
+        auto [k_q, k_s, k_z] = quantize_kv(k, s);
+
+        if (kv_entry && kv_entry->seq_len > 0) {
+          k_q = mx::concatenate({kv_entry->k_quant, k_q}, 2, s);
+          k_s = mx::concatenate({kv_entry->k_scales, k_s}, 2, s);
+          k_z = mx::concatenate({kv_entry->k_zeros, k_z}, 2, s);
+          v_q = mx::concatenate({kv_entry->v_quant, v_q}, 2, s);
+          v_s = mx::concatenate({kv_entry->v_scales, v_s}, 2, s);
+          v_z = mx::concatenate({kv_entry->v_zeros, v_z}, 2, s);
+        }
+        if (kv_entry) {
+          kv_entry->k_quant = k_q;
+          kv_entry->k_scales = k_s;
+          kv_entry->k_zeros = k_z;
+          kv_entry->v_quant = v_q;
+          kv_entry->v_scales = v_s;
+          kv_entry->v_zeros = v_z;
+          kv_entry->seq_len = k_q.shape(2);
+        }
+        attn_out = sdpa_int4(q, k_q, k_s, k_z, v_q, v_s, v_z, sdpa_params_, s);
+      }
     }
-    attn_out = sdpa_int4(q, k_q, k_s, k_z, v_q, v_s, v_z, sdpa_params_, s);
   } else {
     // Fallback: FP16 KV cache + standard attention (for head_dim != 128)
     if (kv_entry) {

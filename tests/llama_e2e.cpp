@@ -84,6 +84,15 @@ int main(int argc, char** argv) {
   log << "[phase] building model..." << std::endl;
   turboquant::LlamaModel model(std::move(weights));
 
+  // Check for --qjl flag
+  for (int i = 1; i < argc; i++) {
+    if (std::string(argv[i]) == "--qjl") {
+      int m = 512;
+      if (i + 1 < argc && argv[i+1][0] != '-') m = std::atoi(argv[++i]);
+      model.enable_qjl(m);
+    }
+  }
+
   // ---- Prepare test input ----
   // Hardcoded token IDs: "<|begin_of_text|> Hello, I am"
   // Llama 3.1 tokenizer: 128000=BOS, 9906=Hello, 11=,, 358=I, 1097=am
@@ -151,7 +160,7 @@ int main(int argc, char** argv) {
 
   // ---- Generate a few more tokens (decode steps) ----
   log << "[phase] running decode steps..." << std::endl;
-  int num_decode = 50;
+  int num_decode = 200;
   std::vector<int32_t> generated = {next_token};
 
   auto t4 = std::chrono::high_resolution_clock::now();

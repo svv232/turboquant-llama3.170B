@@ -7,6 +7,8 @@
 
 #include "engine/llama_loader.h"
 #include "engine/sdpa_int4.h"
+#include "engine/sdpa_qjl.h"
+#include "engine/qjl.h"
 
 namespace mx = mlx::core;
 
@@ -23,6 +25,9 @@ struct KVCacheEntry {
   int seq_len = 0;
   bool preallocated = false;
   int max_seq_len = 0;
+  // QJL mode: K stored as 1-bit sketches
+  mx::array k_sketches{0.0f};  // [B, H, S, m/32] uint32
+  mx::array k_norms_qjl{0.0f}; // [B, H, S] float16
 };
 
 // KV cache for all layers
@@ -78,6 +83,13 @@ class LlamaModel {
   int kv_group_size_ = 32;
   mutable mx::array embed_cache_{0.0f};
   mutable bool embed_dequantized_ = false;
+
+ public:
+  // QJL mode: use QJL 1-bit sketches for K + int4 for V
+  bool use_qjl_ = false;
+  int qjl_sketch_dim_ = 512;  // m
+  mx::array qjl_proj_{0.0f};  // [m, D] projection matrix
+  void enable_qjl(int sketch_dim = 512);
 };
 
 }  // namespace turboquant
