@@ -262,6 +262,7 @@ table_data = [
     ['QJL\n1-bit keys', 'Works on 8B (32 layers)', 'Fails on 70B (80 layers)\nerror compounds'],
     ['PolarQuant', 'Works (4.2× compression)', 'Works (cosine 0.989)\nbut slower than int4'],
     ['Model\nScale', '7-8B parameter models', '70B parameters\nfirst Apple Silicon port'],
+    ['Speed', 'Not reported for\n70B on Apple Silicon', '6.0 tok/s decode\n(mlx-lm: 7.3 tok/s)'],
     ['Quality', 'Near-lossless\n(0.997 recall)', 'Coherent text 200+ tokens\nmatches mlx-lm top-1'],
 ]
 

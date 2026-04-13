@@ -161,6 +161,10 @@ add_executable(sdpa_qjl_bench tests/sdpa_qjl_bench.cpp)
 target_link_libraries(sdpa_qjl_bench PRIVATE turboquant)
 target_compile_definitions(sdpa_qjl_bench PRIVATE _METAL_)
 
+add_executable(chat_engine engine/chat_engine.cpp)
+target_link_libraries(chat_engine PRIVATE turboquant)
+target_compile_definitions(chat_engine PRIVATE _METAL_)
+
 add_executable(llama_e2e tests/llama_e2e.cpp)
 target_link_libraries(llama_e2e PRIVATE turboquant)
 target_compile_definitions(llama_e2e PRIVATE _METAL_)

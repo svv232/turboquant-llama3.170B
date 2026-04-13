@@ -6,6 +6,8 @@
 #include <cmath>
 
 #include "mlx/mlx.h"
+#include "mlx/memory.h"
+#include "mlx/backend/metal/metal.h"
 
 #include "engine/llama_loader.h"
 #include "engine/llama_model.h"
@@ -47,6 +49,10 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
+
+  // Wire memory to prevent paging
+  auto di = mx::metal::device_info();
+  mx::set_wired_limit(std::get<size_t>(di.at("max_recommended_working_set_size")));
 
   TeeStream log("run.log");
 

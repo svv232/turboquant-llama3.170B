@@ -155,7 +155,7 @@ mx::array LlamaModel::layer_forward(
 
   mx::array attn_out(0.0f);
 
-  if (D == 128) {
+  if (D == 128 && !fp16_kv_mode_) {
     // Hybrid attention: fast SDPA for prefill, fused sdpa_int4 for decode
     bool is_prefill = (S > 1);
 
@@ -243,32 +243,20 @@ mx::array LlamaModel::layer_forward(
       }
     }
   } else {
-    // Fallback: FP16 KV cache + standard attention (for head_dim != 128)
+    // FP16 KV cache + MLX fast SDPA (for head_dim != 128 or fp16_kv_mode)
     if (kv_entry) {
       if (kv_entry->seq_len > 0) {
-        k = mx::concatenate({kv_entry->k_quant, k}, 2, s);  // reuse k_quant field for fp16 K
+        k = mx::concatenate({kv_entry->k_quant, k}, 2, s);
         v = mx::concatenate({kv_entry->v_quant, v}, 2, s);
       }
       kv_entry->k_quant = k;
       kv_entry->v_quant = v;
       kv_entry->seq_len = k.shape(2);
     }
-    // Expand KV heads for GQA
-    int gqa = H / Hkv;
-    if (gqa > 1) {
-      k = mx::reshape(mx::repeat(mx::reshape(k, {B, Hkv, 1, k.shape(2), D}, s), gqa, 2, s),
-                       {B, H, k.shape(2), D}, s);
-      v = mx::reshape(mx::repeat(mx::reshape(v, {B, Hkv, 1, v.shape(2), D}, s), gqa, 2, s),
-                       {B, H, v.shape(2), D}, s);
-    }
-    auto scores = mx::multiply(
-        mx::matmul(q, mx::transpose(k, {0, 1, 3, 2}, s), s),
-        mx::array(sdpa_params_.attn_scale), s);
-    auto max_s = mx::max(scores, -1, true, s);
-    auto exp_s = mx::exp(mx::subtract(scores, max_s, s), s);
-    auto sum_s = mx::sum(exp_s, -1, true, s);
-    auto weights_a = mx::divide(exp_s, sum_s, s);
-    attn_out = mx::matmul(weights_a, v, s);
+    // Use MLX's optimized SDPA (handles GQA natively)
+    attn_out = mx::fast::scaled_dot_product_attention(
+        q, k, v, sdpa_params_.attn_scale, /*mask_mode=*/"", /*mask_arrs=*/{},
+        /*sinks=*/std::nullopt, s);
   }
 
   // Reshape back: [B, H, S, D] -> [B, S, H*D]

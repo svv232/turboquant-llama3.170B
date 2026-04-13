@@ -85,6 +85,11 @@ class LlamaModel {
   mutable bool embed_dequantized_ = false;
 
  public:
+  // FP16 mode: skip KV quantization, use MLX fast SDPA for decode too
+  // Faster at short contexts but uses 3.2x more KV memory
+  bool fp16_kv_mode_ = false;
+  void set_fp16_kv_mode(bool enabled) { fp16_kv_mode_ = enabled; }
+
   // QJL mode: use QJL 1-bit sketches for K + int4 for V
   bool use_qjl_ = false;
   int qjl_sketch_dim_ = 512;  // m
