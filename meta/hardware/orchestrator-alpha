@@ -1,0 +1,85 @@
+{
+  "agent": "orchestrator-alpha",
+  "timestamp": "2026-04-12",
+  "platform": "darwin",
+  "os_version": "Darwin 25.3.0",
+
+  "cpu": {
+    "model": "Apple M1 Max",
+    "architecture": "arm64",
+    "physical_cores": 10,
+    "logical_cores": 10,
+    "performance_cores": 8,
+    "efficiency_cores": 2,
+    "features": {
+      "neon": true,
+      "fp16": true,
+      "dot_product": true,
+      "bf16": false
+    }
+  },
+
+  "gpu": {
+    "model": "Apple M1 Max (integrated)",
+    "cores": 32,
+    "metal_support": "Metal 4",
+    "cuda": false,
+    "rocm": false,
+    "metal": true,
+    "vram_gb": "shared (unified memory)",
+    "discrete_gpu": false
+  },
+
+  "apple_silicon": {
+    "chip": "M1 Max",
+    "tier": "max",
+    "generation": 1,
+    "neural_engine": true,
+    "neural_engine_cores": 16,
+    "unified_memory_gb": 64,
+    "memory_bandwidth_gbps": 400
+  },
+
+  "memory": {
+    "total_bytes": 68719476736,
+    "total_gb": 64,
+    "type": "unified (LPDDR5)"
+  },
+
+  "disk": {
+    "working_directory": "/Users/andromeda/marketing/turboquant-llama",
+    "total_tb": 1.8,
+    "used_gb": 263,
+    "available_tb": 1.5,
+    "percent_used": 15,
+    "ssd_sequential_read_gbps": 7.0
+  },
+
+  "turboquant_fitness": {
+    "target_model": "Llama 3.1 70B 4-bit",
+    "target_context": 131072,
+    "weights_gb": 35,
+    "kv_cache_int4_gb": 5.2,
+    "kv_cache_polarquant_gb": 4.7,
+    "total_estimated_gb": 40,
+    "fits_in_memory": true,
+    "kv_cache_fp16_gb": 33,
+    "fp16_total_gb": 68,
+    "fp16_fits": false,
+    "notes": "int4/PolarQuant KV cache is required to fit 128K context in 64GB unified memory"
+  },
+
+  "recommended_defaults": {
+    "num_workers": 8,
+    "metal_threadgroups": 32,
+    "cmake_parallel_jobs": 8,
+    "batch_size_tokens": 512,
+    "kv_cache_quantization": "int4",
+    "mlx_metal_prewarm": true,
+    "max_context_with_int4_kv": 131072,
+    "max_context_with_fp16_kv": 32768,
+    "sdpa_block_size_bn": 32,
+    "sdpa_elems_per_lane": 4,
+    "notes": "head_dim=128 simplifies kernel vs D=256/512; BN=32 is optimal for M1 Max 32-core GPU"
+  }
+}
